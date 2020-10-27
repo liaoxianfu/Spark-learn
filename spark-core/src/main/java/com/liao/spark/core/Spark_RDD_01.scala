@@ -1,7 +1,7 @@
 package com.liao.spark.core
 
 import org.apache.spark.rdd.RDD
-import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.{Partitioner, SparkConf, SparkContext}
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -182,13 +182,22 @@ object Spark_RDD_01 {
       .foreach(println)
 
     // distinct去重
-    val distinctRdd: RDD[Int] = sc.makeRDD(List(1,2,1,5,2,9,6,1))
+    val distinctRdd: RDD[Int] = sc.makeRDD(List(1, 2, 1, 5, 2, 9, 6, 1))
 
     // 3.2 打印去重后生成的新RDD
     distinctRdd.distinct().collect().foreach(println)
 
     // 3.3 对RDD采用多个Task去重，提高并发度
     distinctRdd.distinct(2).collect().foreach(println)
+
+    // sample函数
+    // 从大量数据中进行采样
+
+    val sampleRDD: RDD[Int] = sc.makeRDD(1 to 10, 2)
+    sampleRDD
+      .sample(withReplacement = false, 0.3, 3)
+      .collect()
+      .foreach(println)
 
 
 
@@ -198,9 +207,114 @@ object Spark_RDD_01 {
   }
 
 
-  def main(args: Array[String]): Unit = {
-    transformationDemo()
+  /**
+   *
+   *
+   **/
+
+  def transformationDemo2(): Unit = {
+    val sparkConf: SparkConf = new SparkConf().setMaster("local[*]").setAppName("transformationDemo2")
+    val sc = new SparkContext(config = sparkConf)
+    val disRDD: RDD[Int] = sc.makeRDD(List(1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3), 4)
+    disRDD.distinct(4)
+      .coalesce(1) // 缩减分区
+      .collect()
+      .foreach(println)
   }
 
 
+  def doubleValue(): Unit = {
+    val conf: SparkConf = new SparkConf().setMaster("local[*]").setAppName("doubleValue")
+    val sc = new SparkContext(config = conf)
+    val rdd1: RDD[Int] = sc.makeRDD(List(1, 2, 3, 4))
+    val rdd2: RDD[Int] = sc.makeRDD(List(2, 3, 4, 5, 6))
+    // 求并集
+    print("并集：")
+    rdd1.union(rdd2).collect().foreach(show)
+    println()
+
+
+    // 求交集
+    print("交集:")
+    rdd1.intersection(rdd2).collect().foreach(show)
+    println()
+    //    差集
+    print("差集：")
+    rdd1.subtract(rdd2).collect().foreach(show)
+    println()
+
+
+    /**
+     * zip函数 与python中的zip类似
+     * 想要两个rdd进行zip必须保证两个rdd的元素个数和分区数保持相同 缺一不可
+     **/
+
+    val rdd3: RDD[String] = sc.makeRDD(List("A", "B", "C"))
+    val rdd4: RDD[Int] = sc.makeRDD(List(1, 2, 3))
+    rdd3.zip(rdd4).collect().foreach(println)
+
+
+    sc.stop()
+  }
+
+
+  def show(data: AnyVal): Unit = {
+    print(data + " ")
+  }
+
+
+  def keyValueDemo(): Unit = {
+    //    partitionBY 通过key进行进行重新分区
+
+    val conf: SparkConf = new SparkConf().setMaster("local").setAppName("keyValueDemo")
+    val sc = new SparkContext(conf)
+    val partRdd: RDD[(Int, String)] = sc.makeRDD(List((1, "aaa"), (2, "bbb"), (3, "ccc")))
+
+    val size: Int = partRdd.partitionBy(new MyPartition(2)).partitions.length
+    println(size)
+
+    sc.stop()
+  }
+
+
+  def adDemo(): Unit = {
+    import scala.collection.mutable.ArrayBuffer
+    val conf: SparkConf = new SparkConf().setMaster("local[*]").setAppName("ad")
+    val sc = new SparkContext(conf)
+    //    读取文件
+    val lines: RDD[String] = sc.textFile("ad")
+
+    val value: RDD[((String, String), Int)] =
+      lines.map((line: String) => line.split(" ")) // 将每一行通过空格进行分割
+        .map((arr: Array[String]) => ((arr(1), arr(4)), 1)) // 获取省和广告名称作为key value=1
+        .reduceByKey((_: Int) + (_: Int)) // 通过key进行累加 获取相同省的相同广告的点击量
+    val rdd3: RDD[(String, Iterable[(String, Int)])] =
+      value.map((w: ((String, String), Int)) => (w._1._1, (w._1._2, w._2))) // 将key变为省 value=(广告名称,点击量)
+        .groupByKey() // 分组聚合
+        .map((w: (String, Iterable[(String, Int)])) => (w._1, w._2.slice(0, 3))) // 获取广告点击前3
+    rdd3.collect().foreach(println)
+  }
+
+
+  def main(args: Array[String]): Unit = {
+    adDemo()
+  }
+
+
+}
+
+
+class MyPartition(val num: Int) extends Partitioner {
+  override def numPartitions: Int = num
+
+  override def getPartition(key: Any): Int = {
+    key match {
+      case v: Int =>
+        if (v % 2 == 1) {
+          return 1
+        }
+      case _ => return 0
+    }
+    return 0
+  }
 }
